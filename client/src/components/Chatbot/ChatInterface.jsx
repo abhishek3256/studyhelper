@@ -86,7 +86,7 @@ const ChatInterface = ({ syllabusId }) => {
     };
 
     return (
-        <div className="fixed bottom-6 right-6 z-40 flex flex-col items-end">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 md:left-auto md:translate-x-0 md:right-6 z-40 flex flex-col items-center md:items-end">
             {/* Chat Window */}
             {isOpen && (
                 <div className="mb-4 w-96 h-[500px] bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-slate-800 flex flex-col overflow-hidden transition-all origin-bottom-right animate-in slide-in-from-bottom-5 fade-in duration-300">
@@ -159,8 +159,8 @@ const ChatInterface = ({ syllabusId }) => {
             <button
                 onClick={() => setIsOpen(!isOpen)}
                 className={`p-4 rounded-full shadow-xl transition-all duration-300 flex items-center justify-center ${isOpen
-                        ? 'bg-gray-200 text-gray-600 rotate-90 scale-90 dark:bg-slate-700 dark:text-gray-300'
-                        : 'bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:shadow-blue-500/30 hover:scale-105'
+                    ? 'bg-gray-200 text-gray-600 rotate-90 scale-90 dark:bg-slate-700 dark:text-gray-300'
+                    : 'bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:shadow-blue-500/30 hover:scale-105'
                     }`}
             >
                 {isOpen ? <X size={24} /> : <MessageSquare size={24} />}
