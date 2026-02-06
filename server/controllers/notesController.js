@@ -31,10 +31,10 @@
 
 //         // 1. Extract Topics
 //         const topicPrompt = `Analyze the following educational syllabus text and identify all distinct topics. For each topic, provide a clear title. Return the response as a JSON array of topic titles.
-        
+
 //         Syllabus Text:
 //         ${syllabus.extractedText.substring(0, 30000)} 
-        
+
 //         Format: ["Topic 1 Title", "Topic 2 Title", ...]`;
 //         // Truncate text if too long, Gemini has limit. 30k chars is safe for simple text.
 
@@ -135,11 +135,14 @@
 //     generateContent,
 //     getNotesBySyllabus
 // };
+
+
 const Note = require('../models/Note');
 const Syllabus = require('../models/Syllabus');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// Using Groq API instead of Gemini (much higher free tier limits)
+// Get free API key from: https://console.groq.com/keys
+// Add to .env: GROQ_API_KEY=your_key_here
 
 const generateContent = async (req, res) => {
     const { syllabusId } = req.body;
@@ -164,138 +167,60 @@ const generateContent = async (req, res) => {
         syllabus.processingStatus = 'processing';
         await syllabus.save();
 
-        // Use gemini-2.5-flash - the latest and fastest model
-        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+        console.log('Generating study materials from syllabus using Groq API...');
 
-        // 1. Extract Topics
-        const topicPrompt = `Analyze the following educational syllabus text and identify all distinct topics. For each topic, provide a clear title. Return the response as a JSON array of topic titles.
-        
-Syllabus Text:
-${syllabus.extractedText.substring(0, 30000)} 
-        
-Format: ["Topic 1 Title", "Topic 2 Title", ...]`;
+        // Check which API to use
+        const useGroq = process.env.GROQ_API_KEY && process.env.GROQ_API_KEY.length > 10;
 
-        const topicResult = await model.generateContent(topicPrompt);
-        const topicResponse = topicResult.response;
-        let topicsText = topicResponse.text();
+        let topicsData;
 
-        // Clean markdown code blocks if present
-        topicsText = topicsText.replace(/```json/g, '').replace(/```/g, '').trim();
-
-        let topics = [];
-        try {
-            topics = JSON.parse(topicsText);
-        } catch (e) {
-            console.error("Failed to parse topics JSON", e);
-            // Fallback: try split by newlines if array parse fails
-            topics = topicsText.split('\n')
-                .filter(t => t.trim().length > 5)
-                .map(t => t.replace(/^\d+\.\s*/, '').replace(/^[-•]\s*/, '').replace(/["\[\]]/g, '').trim())
-                .filter(t => t.length > 0);
+        if (useGroq) {
+            topicsData = await generateWithGroq(syllabus.extractedText);
+        } else {
+            // Fallback to Gemini (will fail if quota exceeded)
+            const { GoogleGenerativeAI } = require('@google/generative-ai');
+            const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+            const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+            topicsData = await generateWithGemini(model, syllabus.extractedText);
         }
 
-        if (topics.length === 0) {
-            throw new Error("No topics could be extracted from syllabus");
+        if (!Array.isArray(topicsData) || topicsData.length === 0) {
+            throw new Error("Invalid response format from AI");
         }
 
-        syllabus.totalTopics = topics.length;
-        await syllabus.save();
+        console.log(`Successfully generated content for ${topicsData.length} topics`);
 
-        console.log(`Extracted ${topics.length} topics. Processing first 5...`);
-
-        // 2. Process each topic (limiting to first 5 for faster processing)
-        const limitedTopics = topics.slice(0, 5);
+        // Save topics to database
         const generatedNotes = [];
-
-        for (let i = 0; i < limitedTopics.length; i++) {
-            const topic = limitedTopics[i];
-            console.log(`Processing topic ${i + 1}/${limitedTopics.length}: ${topic}`);
-
-            try {
-                // A. Bullet Points
-                const bulletPrompt = `Create 5-8 concise bullet points summarizing the key concepts for the topic: '${topic}' from this syllabus context. Return as JSON array of strings.
-
-Syllabus Context:
-${syllabus.extractedText.substring(0, 10000)}`;
-
-                const bulletResult = await model.generateContent(bulletPrompt);
-                let bulletText = bulletResult.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
-                let bulletPoints = [];
-                try {
-                    bulletPoints = JSON.parse(bulletText);
-                } catch (e) {
-                    bulletPoints = bulletText.split('\n')
-                        .map(l => l.replace(/^[•-]\s*/, '').replace(/^\d+\.\s*/, '').trim())
-                        .filter(l => l.length > 0);
-                }
-
-                // B. Detailed Explanation
-                const detailPrompt = `Generate comprehensive study notes (300-500 words) for the topic: '${topic}'. Include definitions, key principles, and examples. Write in clear markdown format.
-
-Syllabus Context:
-${syllabus.extractedText.substring(0, 10000)}`;
-
-                const detailResult = await model.generateContent(detailPrompt);
-                const detailedExplanation = detailResult.response.text();
-
-                // C. Questions
-                const quizPrompt = `Generate 5 multiple-choice questions for the topic: '${topic}'. 
-Return as JSON array:
-[{
-  "questionText": "...",
-  "options": ["Option A", "Option B", "Option C", "Option D"],
-  "correctAnswer": "Option A",
-  "explanation": "...",
-  "difficulty": "medium"
-}]
-
-Topic Details:
-${detailedExplanation.substring(0, 2000)}`;
-
-                const quizResult = await model.generateContent(quizPrompt);
-                let quizText = quizResult.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
-                let questions = [];
-                try {
-                    questions = JSON.parse(quizText);
-                } catch (e) {
-                    console.error("Failed to parse quiz JSON for topic:", topic, e);
-                    questions = [];
-                }
-
-                const note = await Note.create({
-                    syllabusId: syllabus._id,
-                    userId: req.user._id,
-                    topicTitle: topic,
-                    bulletPoints,
-                    detailedExplanation,
-                    questions
-                });
-                generatedNotes.push(note);
-
-                console.log(`✓ Completed topic ${i + 1}: ${topic}`);
-
-                // Add delay to avoid rate limiting
-                if (i < limitedTopics.length - 1) {
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                }
-                
-            } catch (topicError) {
-                console.error(`Error processing topic "${topic}":`, topicError.message);
-                // Continue with next topic
-                continue;
-            }
+        for (const topicData of topicsData) {
+            const note = await Note.create({
+                syllabusId: syllabus._id,
+                userId: req.user._id,
+                topicTitle: topicData.topicTitle,
+                bulletPoints: topicData.bulletPoints || [],
+                detailedExplanation: topicData.detailedExplanation || '',
+                questions: topicData.questions || []
+            });
+            generatedNotes.push(note);
+            console.log(`✓ Saved: ${topicData.topicTitle}`);
         }
 
+        syllabus.totalTopics = topicsData.length;
         syllabus.processingStatus = 'completed';
         await syllabus.save();
 
-        console.log(`✅ Successfully generated ${generatedNotes.length} notes`);
+        console.log(`✅ Successfully generated ${generatedNotes.length} notes!`);
 
-        res.status(200).json({ success: true, count: generatedNotes.length, notes: generatedNotes });
+        res.status(200).json({
+            success: true,
+            count: generatedNotes.length,
+            notes: generatedNotes,
+            message: `Generated ${generatedNotes.length} topics`
+        });
 
     } catch (error) {
         console.error('Generation Error:', error);
-        
+
         // Update syllabus status to failed
         try {
             const syllabus = await Syllabus.findById(req.body.syllabusId);
@@ -307,12 +232,201 @@ ${detailedExplanation.substring(0, 2000)}`;
             console.error('Error updating syllabus status:', updateError);
         }
 
-        res.status(500).json({ 
-            message: 'AI Generation Failed', 
+        // Check if it's a rate limit error
+        if (error.message && error.message.includes('429')) {
+            return res.status(429).json({
+                message: 'Rate limit exceeded',
+                error: 'You have exhausted your daily API quota',
+                solutions: [
+                    'Wait 24 hours for quota to reset',
+                    'Get a free Groq API key from https://console.groq.com/keys',
+                    'Add GROQ_API_KEY to your .env file',
+                    'Or upgrade to a paid Gemini plan'
+                ]
+            });
+        }
+
+        res.status(500).json({
+            message: 'AI Generation Failed',
             error: error.message
         });
     }
 };
+
+// Groq API implementation (much higher free limits)
+async function generateWithGroq(syllabusText) {
+    const combinedPrompt = `You are an AI tutor creating comprehensive study materials from a syllabus.
+
+SYLLABUS TEXT:
+${syllabusText.substring(0, 40000)}
+
+YOUR TASK:
+1. Identify the 3 MOST IMPORTANT topics from this syllabus
+2. For EACH topic, create:
+   - 5-8 bullet points (key concepts)
+   - Detailed explanation (300-500 words in markdown)
+   - 5 multiple-choice quiz questions
+
+Return your response as a JSON array with this EXACT structure:
+
+[
+  {
+    "topicTitle": "Topic Name Here",
+    "bulletPoints": [
+      "First key point",
+      "Second key point",
+      "Third key point",
+      "Fourth key point",
+      "Fifth key point"
+    ],
+    "detailedExplanation": "# Topic Name\\n\\nDetailed markdown explanation here with definitions, principles, and examples. Should be 300-500 words.",
+    "questions": [
+      {
+        "questionText": "What is...?",
+        "options": ["Option A", "Option B", "Option C", "Option D"],
+        "correctAnswer": "Option A",
+        "explanation": "This is correct because...",
+        "difficulty": "medium"
+      },
+      {
+        "questionText": "Which of the following...?",
+        "options": ["Option A", "Option B", "Option C", "Option D"],
+        "correctAnswer": "Option B",
+        "explanation": "Explanation here...",
+        "difficulty": "medium"
+      },
+      {
+        "questionText": "How does...?",
+        "options": ["Option A", "Option B", "Option C", "Option D"],
+        "correctAnswer": "Option C",
+        "explanation": "Explanation here...",
+        "difficulty": "hard"
+      },
+      {
+        "questionText": "What would happen if...?",
+        "options": ["Option A", "Option B", "Option C", "Option D"],
+        "correctAnswer": "Option D",
+        "explanation": "Explanation here...",
+        "difficulty": "easy"
+      },
+      {
+        "questionText": "Why is...?",
+        "options": ["Option A", "Option B", "Option C", "Option D"],
+        "correctAnswer": "Option A",
+        "explanation": "Explanation here...",
+        "difficulty": "medium"
+      }
+    ]
+  }
+]
+
+CRITICAL: Return ONLY valid JSON. No markdown code blocks. No extra text. Just the JSON array with 3 topics.`;
+
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            model: 'llama-3.3-70b-versatile', // Free tier: 30 req/min, 6000 req/day
+            messages: [
+                {
+                    role: 'user',
+                    content: combinedPrompt
+                }
+            ],
+            temperature: 0.7,
+            max_tokens: 8000
+        })
+    });
+
+    if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`Groq API error: ${error}`);
+    }
+
+    const data = await response.json();
+    const responseText = data.choices[0].message.content;
+
+    // Parse response
+    let cleanedResponse = responseText
+        .replace(/```json/g, '')
+        .replace(/```/g, '')
+        .trim();
+
+    let topicsData;
+    try {
+        topicsData = JSON.parse(cleanedResponse);
+    } catch (e) {
+        const jsonMatch = cleanedResponse.match(/\[[\s\S]*\]/);
+        if (jsonMatch) {
+            topicsData = JSON.parse(jsonMatch[0]);
+        } else {
+            throw new Error("Could not parse AI response as JSON");
+        }
+    }
+
+    return topicsData;
+}
+
+// Gemini implementation (keeping as fallback)
+async function generateWithGemini(model, syllabusText) {
+    const combinedPrompt = `You are an AI tutor creating comprehensive study materials from a syllabus.
+
+SYLLABUS TEXT:
+${syllabusText.substring(0, 40000)}
+
+YOUR TASK:
+1. Identify the 3 MOST IMPORTANT topics from this syllabus
+2. For EACH topic, create:
+   - 5-8 bullet points (key concepts)
+   - Detailed explanation (300-500 words in markdown)
+   - 5 multiple-choice quiz questions
+
+Return your response as a JSON array with this EXACT structure:
+
+[
+  {
+    "topicTitle": "Topic Name Here",
+    "bulletPoints": ["point 1", "point 2", "point 3", "point 4", "point 5"],
+    "detailedExplanation": "# Topic Name\\n\\nDetailed markdown explanation...",
+    "questions": [
+      {
+        "questionText": "What is...?",
+        "options": ["Option A", "Option B", "Option C", "Option D"],
+        "correctAnswer": "Option A",
+        "explanation": "This is correct because...",
+        "difficulty": "medium"
+      }
+    ]
+  }
+]
+
+CRITICAL: Return ONLY valid JSON. No markdown code blocks. No extra text.`;
+
+    const result = await model.generateContent(combinedPrompt);
+    const responseText = result.response.text();
+
+    let cleanedResponse = responseText
+        .replace(/```json/g, '')
+        .replace(/```/g, '')
+        .trim();
+
+    let topicsData;
+    try {
+        topicsData = JSON.parse(cleanedResponse);
+    } catch (e) {
+        const jsonMatch = cleanedResponse.match(/\[[\s\S]*\]/);
+        if (jsonMatch) {
+            topicsData = JSON.parse(jsonMatch[0]);
+        } else {
+            throw new Error("Could not parse AI response as JSON");
+        }
+    }
+
+    return topicsData;
+}
 
 const getNotesBySyllabus = async (req, res) => {
     try {
