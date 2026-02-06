@@ -13,6 +13,7 @@ const generateToken = (res, userId) => {
         secure: process.env.NODE_ENV !== 'development', // Use secure in production
         sameSite: process.env.NODE_ENV === 'development' ? 'lax' : 'none', // Must be 'none' for cross-site
         maxAge: 7 * 24 * 60 * 60 * 1000,
+        partitioned: true // For Chrome's third-party cookie deprecation
     });
 };
 
