@@ -65,7 +65,7 @@ const NotesViewer = () => {
                     </p>
                     <button
                         onClick={handleGenerate}
-                        className="flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white px-8 py-3 rounded-full font-bold hover:shadow-lg transition-transform hover:scale-105"
+                        className="flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white px-8 py-3 rounded-full font-bold hover:shadow-lg transition-transform hover:scale-105 mx-auto"
                     >
                         <Wand2 className="w-5 h-5" />
                         Generate Study Material
