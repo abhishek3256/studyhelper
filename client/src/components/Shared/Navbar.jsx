@@ -4,14 +4,16 @@ import useAuth from '../../hooks/useAuth';
 import ThemeToggle from './ThemeToggle';
 import AvatarDisplay from '../Profile/AvatarDisplay';
 import { LogOut, LayoutDashboard } from 'lucide-react';
+import studyHelperLogo from '../../assets/studyhelper_logo.svg';
 
 const Navbar = () => {
     const { user, logout } = useAuth();
 
     return (
         <nav className="fixed top-0 left-0 right-0 h-16 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-gray-200 dark:border-slate-800 z-50 flex items-center justify-between px-6 transition-colors duration-300">
-            <Link to="/" className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-                StudyGenius
+            <Link to="/" className="flex items-center gap-2 text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                <img src={studyHelperLogo} alt="StudyHelper Logo" className="w-8 h-8" />
+                StudyHelper
             </Link>
 
             <div className="flex items-center gap-4 sm:gap-6">
